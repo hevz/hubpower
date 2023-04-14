@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <strings.h>
+#include <string.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/ioctl.h>
@@ -17,7 +18,11 @@
 
 #define USB_HUB_TIMEOUT     5000    /* milliseconds */
 #define USB_PORT_FEAT_POWER 8
-
+// Copied from kernel's uapi/linux/usb/ch11.h. Should this be obtained
+// by plain #include ?
+#define USB_PORT_FEAT_ENABLE		1
+#define USB_PORT_FEAT_RESET		4
+#
 #define USB_DT_HUB      (USB_TYPE_CLASS | 0x09)
 #define USB_DT_HUB_SIZE     7
 
@@ -58,6 +63,8 @@ void usage(void)
 {
     fprintf(stderr, "Usage:"
         "\thubpower busnum:devnum power {portnum (on|off)} ...\n"
+        "\thubpower busnum:devnum reset {portnum (on|off)} ...\n"
+        "\thubpower busnum:devnum enable {portnum (on|off)} ...\n"
         "\thubpower busnum:devnum status\n"
         "\thubpower busnum:devnum bind\n"
         );
@@ -125,7 +132,7 @@ void port_status(int portnum)
 int main(int argc, char **argv)
 {
     int busnum, devnum, numports;
-    enum {DO_POWER, DO_STATUS, DO_BIND} action;
+    enum {DO_POWER, DO_RESET, DO_ENABLE, DO_STATUS, DO_BIND} action;
     char fname1[40], fname2[40];
     int rc;
     int portnum;
@@ -144,6 +151,14 @@ int main(int argc, char **argv)
 
     if (strcmp(argv[2], "power") == 0) {
         action = DO_POWER;
+        if ((argc - 3) % 2 != 0)
+            usage();
+    } else if (strcmp(argv[2], "reset") == 0) {
+        action = DO_RESET;
+        if ((argc - 3) % 2 != 0)
+            usage();
+    } else if (strcmp(argv[2], "enable") == 0) {
+        action = DO_ENABLE;
         if ((argc - 3) % 2 != 0)
             usage();
     } else if (strcmp(argv[2], "status") == 0) {
@@ -225,17 +240,19 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (action == DO_POWER) {
+    if ((action == DO_POWER) || (action == DO_RESET) ||
+	(action == DO_ENABLE)) {
         int i;
 
-        usb_ioctl.ifno = 0;
-        usb_ioctl.ioctl_code = USBDEVFS_DISCONNECT;
-        usb_ioctl.data = NULL;
-        rc = ioctl(fd, USBDEVFS_IOCTL, &usb_ioctl);
-        if (rc == -1 && errno != ENODATA) {
-            perror("Error in ioctl (USBDEVFS_DISCONNECT)");
-            return 1;
-        }
+				/* Disconnecting USBDEVFS turns off all devices on this hub */
+        /* usb_ioctl.ifno = 0; */
+        /* usb_ioctl.ioctl_code = USBDEVFS_DISCONNECT; */
+        /* usb_ioctl.data = NULL; */
+        /* rc = ioctl(fd, USBDEVFS_IOCTL, &usb_ioctl); */
+        /* if (rc == -1 && errno != ENODATA) { */
+        /*     perror("Error in ioctl (USBDEVFS_DISCONNECT)"); */
+        /*     return 1; */
+        /* } */
 
         for (i = 3; i < argc; i += 2) {
             portnum = atoi(argv[i]);
@@ -254,10 +271,16 @@ int main(int argc, char **argv)
                         argv[i+1]);
                 continue;
             }
-
             ctrl.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS |
                     USB_RECIP_OTHER;
-            ctrl.wValue = USB_PORT_FEAT_POWER;
+
+	    if (action == DO_POWER)
+	      ctrl.wValue = USB_PORT_FEAT_POWER;
+	    else if (action == DO_RESET)
+	      ctrl.wValue = USB_PORT_FEAT_RESET;
+	    else if (action == DO_ENABLE)
+	      ctrl.wValue = USB_PORT_FEAT_ENABLE;
+
             ctrl.wIndex = portnum;
             ctrl.wLength = 0;
             ctrl.timeout = USB_HUB_TIMEOUT;
